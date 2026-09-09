@@ -12,10 +12,10 @@ Each project has its **own README** with the objectives, hardware, concepts, imp
 
 | #  | Project | Platform | Status |
 | -- | ------- | -------- | ------ |
-| 01 | 🔢 LED Counter | ESP32 | ✅ |
-| 02 | 🎛️ ADC Potentiometer | ESP32 | ✅ |
-| 03 | 🧠 State Machine + 4-bit Counter | ESP32 | ✅ |
-| 04 | 🎛️ Push-Button Control & Debouncing | ESP32 | ✅ |
+| 01 | 🔢 LED Counter | ESP32 | 🔄 |
+| 02 | 🎛️ ADC Potentiometer | ESP32 | 🔄 |
+| 03 | 🧠 State Machine + 4-bit Counter | ESP32 | 🔄 |
+| 04 | 🎛️ Push-Button Control & Debouncing | ESP32 | 🔄 |
 | 05 | 📡 MPU6050 Vibration Monitor | ESP32 | 🚧 |
 | 06 | 💧 Smart Irrigation | ESP32 / IoT | 🔄 |
 | 07 | 🏠 Smart Home | ESP32 / IoT | 🔄 |
@@ -122,7 +122,7 @@ embedded_systems_projects/
 │
 └── ESP32_MPU6050_Vibration_Monitor/
     └── README.md
-te_machine/
-    ├── 07_fault_persistence/
-    └── README.md
+    └── src
+    └── screenshots
+
 
