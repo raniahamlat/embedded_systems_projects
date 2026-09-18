@@ -1,6 +1,7 @@
 # Hardware and Pin Configuration
 
 ## 1. Hardware
+My project was tested using Velxio online simulator
 
 The system uses:
 
@@ -11,19 +12,19 @@ The system uses:
 * Jumper wires
 * Breadboard
 
-The project can also be tested in an ESP32 simulator such as Wokwi.
 
 ---
 
 ## 2. GPIO Configuration
 
-| Component   | ESP32 GPIO | Direction    | Function            |
-| ----------- | ---------: | ------------ | ------------------- |
-| Q0 LED      |     GPIO18 | OUTPUT       | Counter bit 0 — LSB |
-| Q1 LED      |     GPIO19 | OUTPUT       | Counter bit 1       |
-| Q2 LED      |     GPIO21 | OUTPUT       | Counter bit 2       |
-| Q3 LED      |     GPIO22 | OUTPUT       | Counter bit 3 — MSB |
-| Push button |      GPIO4 | INPUT_PULLUP | Counter increment   |
+| Component       | ESP32 GPIO | Direction    | Function                              |
+|-----------------|-----------:|--------------|---------------------------------------|
+| Q0 Yellow LED   | GPIO25     | OUTPUT       | Counter bit 0 — LSB                   |
+| Q1 Green LED    | GPIO33     | OUTPUT       | Counter bit 1                         |
+| Q2 Red LED      | GPIO32     | OUTPUT       | Counter bit 2                         |
+| Q3 Blue LED     | GPIO13     | OUTPUT       | Counter bit 3 — MSB                   |
+| Push Button     | GPIO21     | INPUT_PULLUP | Short press: +1 / Long press: −1      |
+
 
 ---
 
@@ -31,22 +32,13 @@ The project can also be tested in an ESP32 simulator such as Wokwi.
 
 The LEDs represent the four bits of the counter.
 
-```text
-                 ESP32
-
-GPIO18 ───────────── Q0 ──► LED
-GPIO19 ───────────── Q1 ──► LED
-GPIO21 ───────────── Q2 ──► LED
-GPIO22 ───────────── Q3 ──► LED
-```
-
 The mapping is:
 
 ```text
-GPIO18 → Q0 → 2^0 → 1
-GPIO19 → Q1 → 2^1 → 2
-GPIO21 → Q2 → 2^2 → 4
-GPIO22 → Q3 → 2^3 → 8
+GPIO25 → Q0 → 2^0 → 1
+GPIO33 → Q1 → 2^1 → 2
+GPIO25 → Q2 → 2^2 → 4
+GPIO13 → Q3 → 2^3 → 8
 ```
 
 Therefore:
@@ -80,10 +72,10 @@ GPIO states:
 
 | GPIO   | Bit | State |
 | ------ | --- | ----- |
-| GPIO18 | Q0  | HIGH  |
-| GPIO19 | Q1  | LOW   |
-| GPIO21 | Q2  | HIGH  |
-| GPIO22 | Q3  | HIGH  |
+| GPIO32 | Q0  | HIGH  |
+| GPIO33 | Q1  | LOW   |
+| GPIO25 | Q2  | HIGH  |
+| GPIO13 | Q3  | HIGH  |
 
 The LEDs therefore display:
 
@@ -101,7 +93,7 @@ The push button is connected between GPIO4 and GND.
 ```text
         ESP32
           │
-       GPIO4
+       GPIO21
           │
        BUTTON
           │
@@ -121,13 +113,13 @@ The internal pull-up means that no external pull-up resistor is required.
 When the button is released:
 
 ```text
-GPIO4 = HIGH
+GPIO21 = HIGH
 ```
 
 When the button is pressed:
 
 ```text
-GPIO4 = LOW
+GPIO21 = LOW
 ```
 
 The interrupt is therefore configured to detect the falling edge:
@@ -161,16 +153,16 @@ The resistor limits the current through the LED and protects both the LED and th
 The LED pins are stored in an array:
 
 ```cpp
-const int pins[4] = {18, 19, 21, 22};
+const int pins[4] = {32, 33, 25, 13};
 ```
 
 The array index corresponds to the binary bit:
 
 ```text
-pins[0] → GPIO18 → Q0
-pins[1] → GPIO19 → Q1
-pins[2] → GPIO21 → Q2
-pins[3] → GPIO22 → Q3
+pins[0] → GPIO32 → Q0
+pins[1] → GPIO33 → Q1
+pins[2] → GPIO25 → Q2
+pins[3] → GPIO13 → Q3
 ```
 
 This allows the four outputs to be configured and updated using a `for` loop instead of repeating the same code four times.
@@ -184,7 +176,7 @@ The GPIO selection is part of the project design and can be changed if required.
 If the pins are changed, the primary configuration that needs to be updated is:
 
 ```cpp
-const int pins[4] = {18, 19, 21, 22};
+const int pins[4] = {32, 33, 25, 13};
 ```
 
 The logical relationship between the array index and counter bit should remain:
