@@ -1,497 +1,342 @@
-#include <math.h>
-#include <Wire.h>
-#include <Adafruit_BME280.h>
-
-#include "Filter.h"
-#include "MPU6050.h"
-#include "Monitor.h"
+// ============================================================
+//              ESP32 4-BIT COUNTER + STATE MACHINE
+// ============================================================
+//
+// BUTTON:
+//     GPIO 21
+//
+// LEDS:
+//     Bit 0 -> GPIO 25  RED 
+//     Bit 1 -> GPIO 33  GREEN
+//     Bit 2 -> GPIO 32  YELLOW
+//     Bit 3 -> GPIO 26  BLUE
+//
+// BUTTON WIRING:
+//
+//     GPIO 21
+//         |
+//       BUTTON
+//         |
+//        GND
+//
+// INPUT_PULLUP:
+//
+//     Released = HIGH
+//     Pressed  = LOW
+//
+// BEHAVIOR:
+//
+//     Short press -> counter + 1
+//     Long press  -> counter - 1
+//     Not pressed -> wait
+//
+// COUNTER:
+//
+//     0 -> 1 -> 2 -> ... -> 15 -> 0
+//
+//     15 -> 14 -> ... -> 0 -> 15
+//
+// ============================================================
 
 
 // ============================================================
-// PIN CONFIGURATION
+//                       PIN DEFINITIONS
 // ============================================================
 
-#define SDA_PIN 21
-#define SCL_PIN 22
+const int BUTTON_PIN = 21;
 
-#define BME280_ADDRESS 0x76
-
-#define LED_NORMAL 25
-#define LED_WARNING 26
-#define LED_ALARM 27
+const int LED_BIT0 = 25;
+const int LED_BIT1 = 33;
+const int LED_BIT2 = 32;
+const int LED_BIT3 = 13;
 
 
 // ============================================================
-// SAMPLING CONFIGURATION
+//                         TIMING
 // ============================================================
 
-const unsigned long SAMPLE_INTERVAL = 10;   // 10 ms = 100 Hz
-
-unsigned long previousSampleTime = 0;
-
-
-// ============================================================
-// FILTER CONFIGURATION
-// ============================================================
-
-const int FILTER_SIZE = 5;
+const unsigned long DEBOUNCE_TIME   = 50;
+const unsigned long LONG_PRESS_TIME = 1000;
 
 
 // ============================================================
-// FILTER STORAGE
+//                         COUNTER
 // ============================================================
 
-float axStorage[FILTER_SIZE];
-float ayStorage[FILTER_SIZE];
-float azStorage[FILTER_SIZE];
-
-float gxStorage[FILTER_SIZE];
-float gyStorage[FILTER_SIZE];
-float gzStorage[FILTER_SIZE];
+uint8_t counter = 0;
 
 
 // ============================================================
-// OBJECTS
+//                       STATE MACHINE
 // ============================================================
 
-MovingAverage filterAx(axStorage, FILTER_SIZE);
-MovingAverage filterAy(ayStorage, FILTER_SIZE);
-MovingAverage filterAz(azStorage, FILTER_SIZE);
-
-MovingAverage filterGx(gxStorage, FILTER_SIZE);
-MovingAverage filterGy(gyStorage, FILTER_SIZE);
-MovingAverage filterGz(gzStorage, FILTER_SIZE);
-
-MPU6050 mpu;
-Monitor monitor;
-Adafruit_BME280 bme;
-
-
-// ============================================================
-// LED CONTROL
-// ============================================================
-
-void updateLEDs()
+enum ButtonState
 {
-    SystemState state = monitor.getState();
+    NOT_PRESSED,
+    PRESSED,
+    SHORT_PRESS,
+    LONG_PRESS
+};
 
-    // Turn everything OFF first
-    digitalWrite(LED_NORMAL, LOW);
-    digitalWrite(LED_WARNING, LOW);
-    digitalWrite(LED_ALARM, LOW);
-
-
-    switch (state)
-    {
-        case NORMAL:
-
-            digitalWrite(LED_NORMAL, HIGH);
-
-            break;
-
-
-        case WARNING:
-
-            digitalWrite(LED_WARNING, HIGH);
-
-            break;
-
-
-        case ALARM:
-
-            digitalWrite(LED_ALARM, HIGH);
-
-            break;
-
-
-        case FAULT:
-
-            // Blink alarm LED every 250 ms
-            if ((millis() / 250) % 2 == 0)
-            {
-                digitalWrite(LED_ALARM, HIGH);
-            }
-
-            break;
-    }
-}
+ButtonState currentState = NOT_PRESSED;
 
 
 // ============================================================
-// SETUP
+//                     BUTTON VARIABLES
+// ============================================================
+
+int lastButtonReading = HIGH;
+
+int stableButtonState = HIGH;
+
+unsigned long lastDebounceTime = 0;
+
+unsigned long buttonPressTime = 0;
+
+
+// ============================================================
+//                           SETUP
 // ============================================================
 
 void setup()
 {
     Serial.begin(115200);
 
-    delay(500);
+
+    // -------------------- BUTTON --------------------
+
+    pinMode(BUTTON_PIN, INPUT_PULLUP);
 
 
-    // --------------------------------------------------------
-    // I2C INITIALIZATION
-    // --------------------------------------------------------
+    // --------------------- LEDS ---------------------
 
-    Wire.begin(SDA_PIN, SCL_PIN);
+    pinMode(LED_BIT0, OUTPUT);
 
+    pinMode(LED_BIT1, OUTPUT);
 
-    // --------------------------------------------------------
-    // LED INITIALIZATION
-    // --------------------------------------------------------
+    pinMode(LED_BIT2, OUTPUT);
 
-    pinMode(LED_NORMAL, OUTPUT);
-    pinMode(LED_WARNING, OUTPUT);
-    pinMode(LED_ALARM, OUTPUT);
-
-    digitalWrite(LED_NORMAL, LOW);
-    digitalWrite(LED_WARNING, LOW);
-    digitalWrite(LED_ALARM, LOW);
+    pinMode(LED_BIT3, OUTPUT);
 
 
-    // --------------------------------------------------------
-    // STARTUP MESSAGE
-    // --------------------------------------------------------
+    // ---------------- INITIAL DISPLAY ---------------
 
-    Serial.println();
-    Serial.println("================================");
-    Serial.println("ESP32 CONDITION MONITOR");
-    Serial.println("MPU6050 + BME280");
-    Serial.println("================================");
+    displayCounter();
 
 
-    // --------------------------------------------------------
-    // MPU6050 INITIALIZATION
-    // --------------------------------------------------------
-
-    Serial.println("Starting MPU6050...");
-
-    if (!mpu.begin())
-    {
-        Serial.println("MPU6050 ERROR");
-
-        monitor.setMPUHealth(false);
-
-        updateLEDs();
-
-        // Stop normal operation
-        while (true)
-        {
-            updateLEDs();
-            delay(50);
-        }
-    }
-
-    Serial.println("MPU6050 OK");
-
-    monitor.setMPUHealth(true);
-
-
-    // --------------------------------------------------------
-    // BME280 INITIALIZATION
-    // --------------------------------------------------------
-
-    Serial.println("Starting BME280...");
-
-    if (!bme.begin(BME280_ADDRESS))
-    {
-        Serial.println("BME280 ERROR");
-
-        monitor.setBMEHealth(false);
-
-        updateLEDs();
-
-        // Stop normal operation
-        while (true)
-        {
-            updateLEDs();
-            delay(50);
-        }
-    }
-
-    Serial.println("BME280 OK");
-
-    monitor.setBMEHealth(true);
-
-
-    // --------------------------------------------------------
-    // SYSTEM READY
-    // --------------------------------------------------------
-
-    Serial.println();
-    Serial.println("SYSTEM READY");
-    Serial.println("================================");
-
-    updateLEDs();
+    Serial.println("4-BIT COUNTER");
+    Serial.println("Short press = +1");
+    Serial.println("Long press  = -1");
 }
 
 
 // ============================================================
-// MAIN LOOP
+//                            LOOP
 // ============================================================
 
 void loop()
 {
-    unsigned long currentTime = millis();
+    readButton();
+
+    updateStateMachine();
+}
 
 
-    // ========================================================
-    // 100 Hz SAMPLE TIMER
-    // ========================================================
+// ============================================================
+//                        READ BUTTON
+// ============================================================
 
-    if (currentTime - previousSampleTime < SAMPLE_INTERVAL)
+void readButton()
+{
+    int reading = digitalRead(BUTTON_PIN);
+
+
+    // --------------------------------------------------------
+    // Check if raw button signal changed
+    // --------------------------------------------------------
+
+    if (reading != lastButtonReading)
     {
-        return;
-    }
-
-    previousSampleTime = currentTime;
-
-
-    // ========================================================
-    // MPU6050 RAW DATA VARIABLES
-    // ========================================================
-
-    int16_t axRaw;
-    int16_t ayRaw;
-    int16_t azRaw;
-
-    int16_t temperatureRaw;
-
-    int16_t gxRaw;
-    int16_t gyRaw;
-    int16_t gzRaw;
-
-
-    // ========================================================
-    // READ MPU6050
-    // ========================================================
-
-    if (!mpu.read(
-            axRaw,
-            ayRaw,
-            azRaw,
-            temperatureRaw,
-            gxRaw,
-            gyRaw,
-            gzRaw))
-    {
-        Serial.println("MPU6050 READ ERROR");
-
-        monitor.setMPUHealth(false);
-
-        updateLEDs();
-
-        return;
+        lastDebounceTime = millis();
     }
 
 
-    // MPU communication successful
-    monitor.setMPUHealth(true);
+    // --------------------------------------------------------
+    // Check if signal has been stable
+    // --------------------------------------------------------
 
-
-    // ========================================================
-    // CONVERT MPU6050 DATA
-    // ========================================================
-
-    float ax = mpu.accelToG(axRaw);
-    float ay = mpu.accelToG(ayRaw);
-    float az = mpu.accelToG(azRaw);
-
-    float gx = mpu.gyroToDegPerSec(gxRaw);
-    float gy = mpu.gyroToDegPerSec(gyRaw);
-    float gz = mpu.gyroToDegPerSec(gzRaw);
-
-    float mpuTemperature =
-        mpu.temperatureToC(temperatureRaw);
-
-
-    // ========================================================
-    // APPLY MOVING AVERAGE FILTER
-    // ========================================================
-
-    float filteredAx = filterAx.update(ax);
-    float filteredAy = filterAy.update(ay);
-    float filteredAz = filterAz.update(az);
-
-    float filteredGx = filterGx.update(gx);
-    float filteredGy = filterGy.update(gy);
-    float filteredGz = filterGz.update(gz);
-
-
-    // ========================================================
-    // ACCELERATION MAGNITUDE
-    // ========================================================
-
-    float accelerationMagnitude =
-        sqrt(
-            filteredAx * filteredAx +
-            filteredAy * filteredAy +
-            filteredAz * filteredAz
-        );
-
-
-    // ========================================================
-    // DYNAMIC ACCELERATION
-    // Remove approximately 1 g of gravity
-    // ========================================================
-
-    float dynamicAcceleration =
-        fabs(accelerationMagnitude - 1.0);
-
-
-    // ========================================================
-    // GYROSCOPE MAGNITUDE
-    // ========================================================
-
-    float gyroMagnitude =
-        sqrt(
-            filteredGx * filteredGx +
-            filteredGy * filteredGy +
-            filteredGz * filteredGz
-        );
-
-
-    // ========================================================
-    // READ BME280
-    // ========================================================
-
-    float environmentalTemperature =
-        bme.readTemperature();
-
-    float pressure =
-        bme.readPressure() / 100.0F;
-
-    float humidity =
-        bme.readHumidity();
-
-
-    // ========================================================
-    // VALIDATE BME280 DATA
-    // ========================================================
-
-    bool bmeValid =
-        !isnan(environmentalTemperature) &&
-        !isnan(humidity) &&
-        !isnan(pressure);
-
-
-    if (!bmeValid)
+    if ((millis() - lastDebounceTime) > DEBOUNCE_TIME)
     {
-        Serial.println("BME280 INVALID DATA");
+        if (reading != stableButtonState)
+        {
+            stableButtonState = reading;
 
-        monitor.setBMEHealth(false);
 
-        updateLEDs();
+            // ------------------------------------------------
+            // BUTTON PRESSED
+            // ------------------------------------------------
 
-        return;
+            if (stableButtonState == LOW)
+            {
+                buttonPressTime = millis();
+
+                currentState = PRESSED;
+            }
+
+
+            // ------------------------------------------------
+            // BUTTON RELEASED
+            // ------------------------------------------------
+
+            else
+            {
+                unsigned long pressDuration;
+
+                pressDuration = millis() - buttonPressTime;
+
+
+                // --------------------------------------------
+                // SHORT PRESS
+                // --------------------------------------------
+
+                if (pressDuration < LONG_PRESS_TIME)
+                {
+                    currentState = SHORT_PRESS;
+                }
+
+
+                // --------------------------------------------
+                // LONG PRESS
+                // --------------------------------------------
+
+                else
+                {
+                    currentState = LONG_PRESS;
+                }
+            }
+        }
     }
 
 
-    // BME communication/data successful
-    monitor.setBMEHealth(true);
+    lastButtonReading = reading;
+}
 
 
-    // ========================================================
-    // UPDATE MONITORING STATES
-    // ========================================================
+// ============================================================
+//                    UPDATE STATE MACHINE
+// ============================================================
 
-    monitor.update(
-        dynamicAcceleration,
-        gyroMagnitude,
-        currentTime
+void updateStateMachine()
+{
+    switch (currentState)
+    {
+        // ----------------------------------------------------
+        //                    NOT PRESSED
+        // ----------------------------------------------------
+
+        case NOT_PRESSED:
+
+            break;
+
+
+        // ----------------------------------------------------
+        //                       PRESSED
+        // ----------------------------------------------------
+
+        case PRESSED:
+
+            break;
+
+
+        // ----------------------------------------------------
+        //                    SHORT PRESS
+        // ----------------------------------------------------
+
+        case SHORT_PRESS:
+
+            counter++;
+
+            counter = counter & 0x0F;
+
+            displayCounter();
+
+            Serial.print("SHORT PRESS  -> Counter = ");
+
+            Serial.println(counter);
+
+            currentState = NOT_PRESSED;
+
+            break;
+
+
+        // ----------------------------------------------------
+        //                     LONG PRESS
+        // ----------------------------------------------------
+
+        case LONG_PRESS:
+
+            if (counter == 0)
+            {
+                counter = 15;
+            }
+            else
+            {
+                counter--;
+            }
+
+
+            displayCounter();
+
+            Serial.print("LONG PRESS   -> Counter = ");
+
+            Serial.println(counter);
+
+            currentState = NOT_PRESSED;
+
+            break;
+    }
+}
+
+
+// ============================================================
+//                    DISPLAY 4-BIT COUNTER
+// ============================================================
+//
+// COUNTER:
+//
+//     0b0000
+//     ││││
+//     │││└── Bit 0
+//     ││└─── Bit 1
+//     │└──── Bit 2
+//     └───── Bit 3
+//
+// Each bit controls one LED.
+//
+// ============================================================
+
+void displayCounter()
+{
+    digitalWrite(
+        LED_BIT0,
+        (counter >> 0) & 0x01
     );
 
 
-    monitor.updateBME(
-        environmentalTemperature,
-        humidity,
-        pressure,
-        currentTime
+    digitalWrite(
+        LED_BIT1,
+        (counter >> 1) & 0x01
     );
 
 
-    // ========================================================
-    // UPDATE LEDs
-    // ========================================================
-
-    updateLEDs();
-
-
-    // ========================================================
-    // SERIAL MONITOR
-    // ========================================================
-
-    Serial.print("ACC: ");
-
-    Serial.print(filteredAx, 2);
-    Serial.print(", ");
-
-    Serial.print(filteredAy, 2);
-    Serial.print(", ");
-
-    Serial.print(filteredAz, 2);
-
-    Serial.print(" g");
+    digitalWrite(
+        LED_BIT2,
+        (counter >> 2) & 0x01
+    );
 
 
-    Serial.print(" | DYNAMIC: ");
-
-    Serial.print(dynamicAcceleration, 3);
-
-    Serial.print(" g");
-
-
-    Serial.print(" | GYRO: ");
-
-    Serial.print(filteredGx, 1);
-    Serial.print(", ");
-
-    Serial.print(filteredGy, 1);
-    Serial.print(", ");
-
-    Serial.print(filteredGz, 1);
-
-    Serial.print(" deg/s");
-
-
-    Serial.print(" | MPU TEMP: ");
-
-    Serial.print(mpuTemperature, 2);
-
-    Serial.print(" C");
-
-
-    Serial.print(" | ENV TEMP: ");
-
-    Serial.print(environmentalTemperature, 2);
-
-    Serial.print(" C");
-
-
-    Serial.print(" | HUMIDITY: ");
-
-    Serial.print(humidity, 1);
-
-    Serial.print(" %");
-
-
-    Serial.print(" | PRESSURE: ");
-
-    Serial.print(pressure, 2);
-
-    Serial.print(" hPa");
-
-
-    Serial.print(" | MPU STATE: ");
-
-    Serial.print(monitor.getMPUStateName());
-
-
-    Serial.print(" | BME STATE: ");
-
-    Serial.print(monitor.getBMEStateName());
-
-
-    Serial.print(" | SYSTEM STATE: ");
-
-    Serial.println(monitor.getStateName());
+    digitalWrite(
+        LED_BIT3,
+        (counter >> 3) & 0x01
+    );
 }
