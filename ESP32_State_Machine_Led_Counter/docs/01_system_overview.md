@@ -55,7 +55,7 @@ When the counter reaches `15`, the next increment returns it to `0`.
 
 ## 3. User Input
 
-A push button connected to GPIO4 is used to increment the counter.
+A push button connected to GPIO21 is used to increment the counter.
 
 The button is configured with the ESP32 internal pull-up resistor.
 
